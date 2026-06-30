@@ -1,10 +1,14 @@
+streamlit
+openai
+python-dotenv
 torch
 transformers==4.37.2
-speechrecognition
+SpeechRecognition
 pyttsx3
 schedule
-python-dotenv
-bypd lwzy fimx wysg
-cd Desktop\Personalized-ai
-venv\Scripts\activate
-python -m streamlit run chat_ui.py
+google-api-python-client
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
+pandas
+numpy
