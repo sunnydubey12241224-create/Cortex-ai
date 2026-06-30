@@ -1,90 +1,64 @@
+import os
 import speech_recognition as sr
-import pyttsx3
-import threading
 
-# Initialize engine
-engine = pyttsx3.init()
-engine_lock = threading.Lock()
+# Cloud detection
+IS_WINDOWS = os.name == "nt"
 
-# ===============================
-# 🔊 VOICE CONFIGURATION
-# ===============================
-def set_voice(style="default", rate=180, volume=1.0):
-    voices = engine.getProperty('voices')
+engine = None
 
-    # Select voice
-    if style == "female" and len(voices) > 1:
-        engine.setProperty('voice', voices[1].id)
-    else:
-        engine.setProperty('voice', voices[0].id)
-
-    # Set properties
-    engine.setProperty('rate', rate)      # Speed
-    engine.setProperty('volume', volume)  # Volume (0.0 to 1.0)
+if IS_WINDOWS:
+    try:
+        import pyttsx3
+        engine = pyttsx3.init()
+    except Exception:
+        engine = None
 
 
-# ===============================
-# 🔊 SPEAK FUNCTION
-# ===============================
 def speak(text):
-    if not text:
+    """Speak only on Windows."""
+    if engine is None:
         return
 
-    def run():
-        with engine_lock:
-            engine.say(text)
-            engine.runAndWait()
-
-    t = threading.Thread(target=run)
-    t.start()
+    try:
+        engine.say(text)
+        engine.runAndWait()
+    except Exception:
+        pass
 
 
-# ===============================
-# 🛑 STOP SPEAKING
-# ===============================
-def stop_speaking():
-    with engine_lock:
-        engine.stop()
+def listen():
+    """Voice input only on Windows."""
+    if not IS_WINDOWS:
+        return ""
 
-
-# ===============================
-# 🎤 LISTEN FUNCTION
-# ===============================
-def listen(timeout=5, phrase_time_limit=10):
     recognizer = sr.Recognizer()
 
+    with sr.Microphone() as source:
+        print("Listening...")
+        recognizer.adjust_for_ambient_noise(source)
+        audio = recognizer.listen(source)
+
     try:
-        with sr.Microphone() as source:
-            print("🎤 Listening...")
-
-            # Adjust for ambient noise
-            recognizer.adjust_for_ambient_noise(source, duration=1)
-
-            audio = recognizer.listen(
-                source,
-                timeout=timeout,
-                phrase_time_limit=phrase_time_limit
-            )
-
-        print("🧠 Processing...")
-
-        text = recognizer.recognize_google(audio)
-        print("You said:", text)
-
-        return text
-
-    except sr.WaitTimeoutError:
-        print("⏱ No speech detected")
+        return recognizer.recognize_google(audio)
+    except Exception:
         return ""
 
-    except sr.UnknownValueError:
-        print("🤷 Could not understand audio")
-        return ""
 
-    except sr.RequestError:
-        print("❌ Speech service error")
-        return ""
+def set_voice(style="default", speed=180, volume=1.0):
+    """Configure voice engine on Windows."""
+    if engine is None:
+        return
 
-    except Exception as e:
-        print("⚠ Error:", e)
-        return ""
+    try:
+        engine.setProperty("rate", speed)
+        engine.setProperty("volume", volume)
+
+        voices = engine.getProperty("voices")
+
+        if style == "female" and len(voices) > 1:
+            engine.setProperty("voice", voices[1].id)
+        elif len(voices) > 0:
+            engine.setProperty("voice", voices[0].id)
+
+    except Exception:
+        pass
