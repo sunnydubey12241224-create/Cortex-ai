@@ -1,108 +1,352 @@
 import os
-import datetime
+import json
+import base64
+from email import message_from_bytes
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
-SCOPES = ['https://www.googleapis.com/auth/calendar']
+from llm_engine import generate
+
+SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly"
+]
 
 
-class CalendarAgent:
+class EmailAgent:
 
     def __init__(self):
-        BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        self.credentials_path = os.path.join(BASE_DIR, "credentials.json")
-        self.token_path = os.path.join(BASE_DIR, "calendar_token.json")
 
+        BASE_DIR = os.path.dirname(
+            os.path.dirname(os.path.abspath(__file__))
+        )
+
+        self.credentials_path = os.path.join(
+            BASE_DIR,
+            "credentials.json"
+        )
+
+        self.token_path = os.path.join(
+            BASE_DIR,
+            "token.json"
+        )
+
+    # =====================================================
+    # Authentication
+    # =====================================================
     def authenticate(self):
+
         creds = None
 
-        if os.path.exists(self.token_path):
-            creds = Credentials.from_authorized_user_file(self.token_path, SCOPES)
+        # ---------------------------------------------
+        # Load existing token
+        # ---------------------------------------------
+        calendar_token = os.getenv(
+    "GOOGLE_CALENDAR_TOKEN"
+)
 
+if calendar_token:
+
+    creds = Credentials.from_authorized_user_info(
+        json.loads(calendar_token),
+        SCOPES
+    )
+
+elif os.path.exists(self.token_path):
+
+    creds = Credentials.from_authorized_user_file(
+        self.token_path,
+        SCOPES
+    )
+
+        # ---------------------------------------------
+        # Refresh / Login
+        # ---------------------------------------------
         if not creds or not creds.valid:
+
             if creds and creds.expired and creds.refresh_token:
+
                 creds.refresh(Request())
+
             else:
-                flow = InstalledAppFlow.from_client_secrets_file(
-                    self.credentials_path, SCOPES
+
+                # -------------------------------------
+                # Railway
+                # -------------------------------------
+                google_credentials = os.getenv(
+                    "GOOGLE_CREDENTIALS"
                 )
+
+                if google_credentials:
+
+                    client_config = json.loads(
+                        google_credentials
+                    )
+
+                    flow = InstalledAppFlow.from_client_config(
+                        client_config,
+                        SCOPES
+                    )
+
+                # -------------------------------------
+                # Local PC
+                # -------------------------------------
+                else:
+
+                    if not os.path.exists(
+                        self.credentials_path
+                    ):
+
+                        raise FileNotFoundError(
+                            "credentials.json not found."
+                        )
+
+                    flow = InstalledAppFlow.from_client_secrets_file(
+                        self.credentials_path,
+                        SCOPES
+                    )
+
                 creds = flow.run_local_server(port=0)
 
-            with open(self.token_path, 'w') as token:
-                token.write(creds.to_json())
+            # Save token locally
+            try:
+                with open(
+                    self.token_path,
+                    "w"
+                ) as token:
+
+                    token.write(
+                        creds.to_json()
+                    )
+            except Exception:
+                pass
 
         return creds
 
+    # =====================================================
+    # Gmail Service
+    # =====================================================
     def build_service(self, creds):
-        return build('calendar', 'v3', credentials=creds)
 
-    def get_events_today(self):
-        creds = self.authenticate()
-        service = self.build_service(creds)
+        return build(
+            "gmail",
+            "v1",
+            credentials=creds
+        )
 
-        now = datetime.datetime.utcnow().isoformat() + 'Z'
+    # =====================================================
+    # Extract Email Text
+    # =====================================================
+    def _extract_text(self, email_msg):
 
-        events = service.events().list(
-            calendarId='primary',
-            timeMin=now,
-            maxResults=10,
-            singleEvents=True,
-            orderBy='startTime'
-        ).execute().get('items', [])
+        if email_msg.is_multipart():
 
-        if not events:
-            return "📅 No meetings today."
+            for part in email_msg.walk():
 
-        result = "📅 Today's meetings:\n\n"
-        for e in events:
-            start = e['start'].get('dateTime', e['start'].get('date'))
-            result += f"- {e['summary']} at {start}\n"
+                if (
+                    part.get_content_type()
+                    == "text/plain"
+                ):
 
-        return result
+                    return (
+                        part.get_payload(
+                            decode=True
+                        )
+                        .decode(
+                            errors="ignore"
+                        )
+                    )
 
-    def create_event(self, summary="Meeting", hour=15, minute=0):
-        creds = self.authenticate()
-        service = self.build_service(creds)
+        else:
 
-        start = datetime.datetime.now().replace(hour=hour, minute=minute, second=0)
-        end = start + datetime.timedelta(hours=1)
+            return (
+                email_msg.get_payload(
+                    decode=True
+                )
+                .decode(
+                    errors="ignore"
+                )
+            )
 
-        event = {
-            'summary': summary,
-            'start': {'dateTime': start.isoformat()},
-            'end': {'dateTime': end.isoformat()},
-        }
+        return ""
 
-        service.events().insert(calendarId='primary', body=event).execute()
+    # =====================================================
+    # Latest Email
+    # =====================================================
+    def fetch_latest_email(self):
 
-        return f"✅ Meeting '{summary}' scheduled at {hour}:{minute}"
+        try:
 
-    def smart_schedule(self, summary="Smart Meeting"):
-        creds = self.authenticate()
-        service = self.build_service(creds)
+            creds = self.authenticate()
 
-        now = datetime.datetime.utcnow().isoformat() + 'Z'
+            service = self.build_service(
+                creds
+            )
 
-        events = service.events().list(
-            calendarId='primary',
-            timeMin=now,
-            maxResults=10,
-            singleEvents=True,
-            orderBy='startTime'
-        ).execute().get('items', [])
+            results = (
+                service.users()
+                .messages()
+                .list(
+                    userId="me",
+                    maxResults=1
+                )
+                .execute()
+            )
 
-        busy_hours = []
+            messages = results.get(
+                "messages",
+                []
+            )
 
-        for e in events:
-            start = e['start'].get('dateTime', '')
-            if "T" in start:
-                busy_hours.append(int(start.split("T")[1].split(":")[0]))
+            if not messages:
+                return None
 
-        hour = 10
-        while hour in busy_hours:
-            hour += 1
+            msg = (
+                service.users()
+                .messages()
+                .get(
+                    userId="me",
+                    id=messages[0]["id"],
+                    format="raw"
+                )
+                .execute()
+            )
 
-        return self.create_event(summary, hour, 0)
+            raw_data = base64.urlsafe_b64decode(
+                msg["raw"]
+            )
+
+            email_msg = message_from_bytes(
+                raw_data
+            )
+
+            return self._extract_text(
+                email_msg
+            )
+
+        except Exception as e:
+
+            return f"ERROR: {e}"
+
+    # =====================================================
+    # Summarize Multiple Emails
+    # =====================================================
+    def summarize_multiple(
+        self,
+        count=3
+    ):
+
+        try:
+
+            creds = self.authenticate()
+
+            service = self.build_service(
+                creds
+            )
+
+            results = (
+                service.users()
+                .messages()
+                .list(
+                    userId="me",
+                    maxResults=count
+                )
+                .execute()
+            )
+
+            messages = results.get(
+                "messages",
+                []
+            )
+
+            summaries = []
+
+            for m in messages:
+
+                msg = (
+                    service.users()
+                    .messages()
+                    .get(
+                        userId="me",
+                        id=m["id"],
+                        format="raw"
+                    )
+                    .execute()
+                )
+
+                raw_data = (
+                    base64.urlsafe_b64decode(
+                        msg["raw"]
+                    )
+                )
+
+                email_msg = message_from_bytes(
+                    raw_data
+                )
+
+                text = self._extract_text(
+                    email_msg
+                )[:1000]
+
+                summaries.append(
+                    generate(
+                        f"Summarize this email:\n{text}"
+                    )
+                )
+
+            return "\n\n----------------------\n\n".join(
+                summaries
+            )
+
+        except Exception as e:
+
+            return f"ERROR: {e}"
+
+    # =====================================================
+    # Reply Generator
+    # =====================================================
+    def generate_reply(self):
+
+        email_text = self.fetch_latest_email()
+
+        if (
+            not email_text
+            or email_text.startswith("ERROR")
+        ):
+
+            return "Unable to read latest email."
+
+        return generate(
+            f"""
+Write a professional reply.
+
+Email:
+
+{email_text[:1500]}
+"""
+        )
+
+    # =====================================================
+    # Main Execute
+    # =====================================================
+    def execute(self):
+
+        email_text = self.fetch_latest_email()
+
+        if not email_text:
+
+            return "No emails found."
+
+        if email_text.startswith("ERROR"):
+
+            return email_text
+
+        return generate(
+            f"""
+Summarize this email.
+
+{email_text[:1500]}
+"""
+        )
