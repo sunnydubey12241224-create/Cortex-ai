@@ -38,102 +38,80 @@ class EmailAgent:
     # =====================================================
     def authenticate(self):
 
-        creds = None
+    creds = None
 
-        # ---------------------------------------------
-        # Load existing token
-        # ---------------------------------------------
-       gmail_token = os.getenv("GOOGLE_GMAIL_TOKEN")
+    # ---------------------------------------------
+    # Load token from Railway environment variable
+    # ---------------------------------------------
+    gmail_token = os.getenv("GOOGLE_GMAIL_TOKEN")
+
     if gmail_token:
-        creds = Credentials.from_authorized_user_info(
-            json.loads(gmail_token),
-              SCOPES
+        try:
+            creds = Credentials.from_authorized_user_info(
+                json.loads(gmail_token),
+                SCOPES
+            )
+        except Exception:
+            creds = None
+
+    # ---------------------------------------------
+    # Load local token.json
+    # ---------------------------------------------
+    elif os.path.exists(self.token_path):
+        try:
+            creds = Credentials.from_authorized_user_file(
+                self.token_path,
+                SCOPES
+            )
+        except Exception:
+            creds = None
+
+    # ---------------------------------------------
+    # Refresh token if expired
+    # ---------------------------------------------
+    if creds and creds.expired and creds.refresh_token:
+        try:
+            creds.refresh(Request())
+        except Exception:
+            creds = None
+
+    # ---------------------------------------------
+    # Authenticate if no valid token exists
+    # ---------------------------------------------
+    if not creds:
+
+        google_credentials = os.getenv("GOOGLE_CREDENTIALS")
+
+        if google_credentials:
+
+            client_config = json.loads(google_credentials)
+
+            flow = InstalledAppFlow.from_client_config(
+                client_config,
+                SCOPES
+            )
+
+        else:
+
+            if not os.path.exists(self.credentials_path):
+                raise FileNotFoundError(
+                    "credentials.json not found."
                 )
 
-     elif os.path.exists(self.token_path):
+            flow = InstalledAppFlow.from_client_secrets_file(
+                self.credentials_path,
+                SCOPES
+            )
 
-        creds = Credentials.from_authorized_user_file(
-            self.token_path,
-               SCOPES
-    )
-             except Exception:
-                creds = None
+        creds = flow.run_local_server(port=0)
 
-        # ---------------------------------------------
-        # Refresh / Login
-        # ---------------------------------------------
-        if not creds or not creds.valid:
+        try:
+            with open(self.token_path, "w") as token:
+                token.write(creds.to_json())
+        except Exception:
+            pass
 
-            if creds and creds.expired and creds.refresh_token:
-
-                creds.refresh(Request())
-
-            else:
-
-                # -------------------------------------
-                # Railway
-                # -------------------------------------
-                google_credentials = os.getenv(
-                    "GOOGLE_CREDENTIALS"
-                )
-
-                if google_credentials:
-
-                    client_config = json.loads(
-                        google_credentials
-                    )
-
-                    flow = InstalledAppFlow.from_client_config(
-                        client_config,
-                        SCOPES
-                    )
-
-                # -------------------------------------
-                # Local PC
-                # -------------------------------------
-                else:
-
-                    if not os.path.exists(
-                        self.credentials_path
-                    ):
-
-                        raise FileNotFoundError(
-                            "credentials.json not found."
-                        )
-
-                    flow = InstalledAppFlow.from_client_secrets_file(
-                        self.credentials_path,
-                        SCOPES
-                    )
-
-                creds = flow.run_local_server(port=0)
-
-            # Save token locally
-            try:
-                with open(
-                    self.token_path,
-                    "w"
-                ) as token:
-
-                    token.write(
-                        creds.to_json()
-                    )
-            except Exception:
-                pass
-
-        return creds
-
-    # =====================================================
-    # Gmail Service
-    # =====================================================
-    def build_service(self, creds):
-
-        return build(
-            "gmail",
-            "v1",
-            credentials=creds
-        )
-
+    return creds
     # =====================================================
     # Extract Email Text
     # =====================================================
