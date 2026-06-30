@@ -38,28 +38,33 @@ class EmailAgent:
     # =====================================================
     def authenticate(self):
 
-        creds = None
+    creds = None
 
-        # ---------------------------------------------
-        # Load existing token
-        # ---------------------------------------------
-        calendar_token = os.getenv(
-    "GOOGLE_CALENDAR_TOKEN"
-)
+    # ---------------------------------------------
+    # Load Railway token
+    # ---------------------------------------------
+    calendar_token = os.getenv("GOOGLE_CALENDAR_TOKEN")
 
-if calendar_token:
+    if calendar_token:
+        try:
+            creds = Credentials.from_authorized_user_info(
+                json.loads(calendar_token),
+                SCOPES
+            )
+        except Exception:
+            creds = None
 
-    creds = Credentials.from_authorized_user_info(
-        json.loads(calendar_token),
-        SCOPES
-    )
-
-elif os.path.exists(self.token_path):
-
-    creds = Credentials.from_authorized_user_file(
-        self.token_path,
-        SCOPES
-    )
+    # ---------------------------------------------
+    # Load local token
+    # ---------------------------------------------
+    elif os.path.exists(self.token_path):
+        try:
+            creds = Credentials.from_authorized_user_file(
+                self.token_path,
+                SCOPES
+            )
+        except Exception:
+            creds = None
 
         # ---------------------------------------------
         # Refresh / Login
