@@ -1,0 +1,10 @@
+torch
+transformers==4.37.2
+speechrecognition
+pyttsx3
+schedule
+python-dotenv
+bypd lwzy fimx wysg
+cd Desktop\Personalized-ai
+venv\Scripts\activate
+python -m streamlit run chat_ui.py
