@@ -98,8 +98,16 @@ class EmailAgent:
                     SCOPES
                 )
 
-            creds = flow.run_local_server(port=0)
+            # Running on Railway?
+            if os.getenv("RAILWAY_STATIC_URL") or os.getenv("RAILWAY_ENVIRONMENT"):
+                raise RuntimeError(
+                    "No Gmail token found. "
+                    "Add GOOGLE_GMAIL_TOKEN to Railway Variables. "
+                    "Do not use run_local_server() on Railway."
+                )
 
+            # Local Windows login
+            creds = flow.run_local_server(port=0)
             try:
                 with open(self.token_path, "w") as token:
                     token.write(creds.to_json())
